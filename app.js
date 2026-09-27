@@ -1,9 +1,10 @@
 /* Almacén de obra — app de campo sin conexión para el CONTROL DE ALMACÉN (Porotobango).
-   Registra ENTRADAS (materiales que llegan a obra, con su NEA) y SALIDAS (entregas de almacén).
+   Registra las SALIDAS de almacén (las ENTRADAS ingresan solas al Excel cuando se lee el PDF digital de la O/C).
+   «Doc. de salida» se numera solo: 001 - 2026, 002 - 2026… (continúa del último número que tiene el Excel).
    Datos solo en el teléfono (IndexedDB). Envío: archivo alm_*.csv + fotos por el menú Compartir → Google Drive.
    El Excel los lee con Power Query (hoja «CELULAR (ALMACÉN)») y los suma al kardex igual que ENTRADA / SALIDA. */
 'use strict';
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.1.0';
 const CAT_SHEET = 'CATÁLOGO CELULAR';
 const MAX_FOTOS = 3, FOTO_LADO = 1600, FOTO_CAL = 0.72, FOTOS_POR_ENVIO = 6;
 const CARPETA = 'ALMACEN POROTOBANGO › CELULAR';
@@ -11,7 +12,7 @@ const CSV_COLS = ['ID', 'TIPO', 'FECHA', 'CODIGO', 'CANTIDAD', 'N_NEA', 'RECOGID
   'USUARIO', 'LATITUD', 'LONGITUD', 'PRECISION_M', 'FOTOS', 'CREADO'];
 
 const $ = id => document.getElementById(id);
-const S = { recs: [], cat: null, byCode: new Map(), ids: new Set(), user: '', lotes: [], sel: null, tipo: 'ENTRADA',
+const S = { recs: [], cat: null, byCode: new Map(), ids: new Set(), user: '', lotes: [], sel: null, tipo: 'SALIDA', docFijo: null, valeNuevo: false,
   fotosNuevas: [], fotosQuitar: [], fotosExist: [], gps: null, prep: null };
 
 /* ---------------- IndexedDB (base propia, distinta de la app de metrados) ---------------- */
@@ -103,8 +104,9 @@ async function cargarCatalogo(file) {
     }
     if (!items.length) throw new Error(rows.length > 50 ? 'El libro no tiene los valores calculados. En la PC: abra el libro en Excel, use Datos → Actualizar todo, GUARDE (Ctrl+G) y vuelva a cargarlo aquí.' : 'No se encontraron materiales en el catálogo.');
     if (sinValor > items.length / 2) throw new Error('El libro no tiene el stock calculado. Ábralo en Excel, use Datos → Actualizar todo, GUARDE y vuelva a intentar.');
-    const cat = { items, ids, file: file.name, cargado: ahoraISO() };
-    await setMeta('cat', cat); aplicarCatalogo(cat);
+    const ult = rows[1] ? parseInt(rows[1][10], 10) : NaN;
+    const cat = { items, ids, file: file.name, cargado: ahoraISO(), ultDoc: isNaN(ult) ? 0 : ult, ultDocAnio: new Date().getFullYear() };
+    await setMeta('cat', cat); aplicarCatalogo(cat); actualizarDoc();
     const car = S.recs.filter(r => S.ids.has(r.id)).length;
     msg('catMsg', `✔ Catálogo actualizado: ${items.length} materiales. ${ids.length} registros del celular ya están en el Excel (${car} de este teléfono).`, 'ok');
     renderTodo();
@@ -133,7 +135,7 @@ function buscar(q) {
   const res = hits.slice(0, 60).map(h => h[3]);
   ul.innerHTML = res.length ? res.map(p => {
     const s = stock(p.code); const rc = porRecibir(p.code);
-    const info = `stock ${fmt(s)} ${esc(p.und)}` + (rc ? ` · por recibir ${fmt(rc)}` : '');
+    const info = `stock ${fmt(s)} ${esc(p.und)}`;
     return `<li data-c="${esc(p.code)}"><span class="s ${s <= 1e-9 ? 'cero' : ''}">${info}</span>
       <span class="c">${esc(p.code)}</span><br>${esc(p.desc)}<br><span class="muted small">${esc(p.oc)}${p.clas ? ' · ' + esc(p.clas) : ''}</span></li>`;
   }).join('') : '<li class="muted">Sin resultados</li>';
@@ -157,13 +159,42 @@ function actualizarSaldo() {
   const ex = $('editId').value || null;
   const s = stock(S.sel.code, ex), rc = porRecibir(S.sel.code, ex);
   $('pSaldo').textContent = `${fmt(s)} ${S.sel.und}`; $('pSaldo').style.color = s <= 1e-9 ? 'var(--red)' : 'var(--green)';
-  $('pRecibir').textContent = rc === null ? '—' : `${fmt(rc)} ${S.sel.und}`;
+  $('pRecibir').textContent = S.sel.oc || '—';
 }
 function renderRecientes() {
   const seen = []; for (const r of [...S.recs].sort((a, b) => b.creado.localeCompare(a.creado))) { if (!seen.includes(r.codigo)) seen.push(r.codigo); if (seen.length >= 8) break; }
   $('recientes').innerHTML = seen.filter(c => S.byCode.has(c)).map(c => `<button type="button" class="chip" data-c="${esc(c)}">${esc(c)}</button>`).join('');
   const lista = (k, id) => { const v = [...new Set(S.recs.map(r => r[k]).filter(Boolean))].slice(-30); $(id).innerHTML = v.map(f => `<option value="${esc(f)}">`).join(''); };
   lista('entregado_a', 'dlEntregado'); lista('motivo', 'dlMotivo');
+}
+
+/* ---------------- N° de «Doc. de salida» (vale): 001 - 2026 ---------------- */
+const docTxt = (n, y) => `${String(n).padStart(3, '0')} - ${y}`;
+function docParse(d) { const m = /^\s*(\d+)\s*-\s*(\d{4})\s*$/.exec(d || ''); return m ? { n: +m[1], y: +m[2] } : null; }
+function docSiguiente(y) {
+  let mx = S.cat && S.cat.ultDocAnio === y ? (S.cat.ultDoc || 0) : 0;
+  for (const r of S.recs) { const d = docParse(r.doc); if (d && d.y === y && d.n > mx) mx = d.n; }
+  return docTxt(mx + 1, y);
+}
+/* mismo vale: la salida anterior de este teléfono, del mismo día y para la misma persona (hace menos de 3 horas) */
+function valeAnterior() {
+  const f = $('fFecha').value, a = norm($('fEntregado').value.trim());
+  if (!f || !a) return null;
+  const ult = S.recs.filter(r => r.tipo === 'SALIDA' && r.doc && r.cantidad > 0).sort((x, y) => y.creado.localeCompare(x.creado))[0];
+  if (!ult || ult.fecha !== f || norm(ult.entregado_a) !== a) return null;
+  if (Date.now() - new Date(ult.creado).getTime() > 3 * 3600e3) return null;
+  return ult.doc;
+}
+function docActual() {
+  if (S.docFijo) return { doc: S.docFijo, info: 'N° del registro original' };
+  const y = +($('fFecha').value || hoy()).slice(0, 4);
+  const ant = S.valeNuevo ? null : valeAnterior();
+  return ant ? { doc: ant, info: 'mismo vale que el material anterior', mismo: true } : { doc: docSiguiente(y), info: 'vale nuevo' };
+}
+function actualizarDoc() {
+  const d = docActual();
+  $('fDoc').value = d.doc; $('docInfo').textContent = d.info;
+  $('btnValeNuevo').classList.toggle('hidden', !d.mismo);
 }
 
 /* ---------------- formulario ---------------- */
@@ -199,11 +230,14 @@ function setTipo(t) {
   recalcular();
 }
 function limpiar(mantenerFecha = true) {
-  const f = $('fFecha').value, t = S.tipo, rec = $('fRecogido').value;
+  const f = $('fFecha').value, rec = $('fRecogido').value, ent0 = $('fEntregado').value, mot0 = $('fMotivo').value;
   $('frm').reset(); $('editId').value = '';
   $('fFecha').value = mantenerFecha && f ? f : hoy();
   if (mantenerFecha) $('fRecogido').value = rec;
-  S.fotosNuevas = []; S.fotosQuitar = []; S.fotosExist = []; renderThumbs(); quitarPartida(); setTipo(mantenerFecha ? t : 'ENTRADA'); msg('msg');
+  const ent = mantenerFecha ? ent0 : '', mot = mantenerFecha ? mot0 : '';
+  S.docFijo = null; S.valeNuevo = false;
+  S.fotosNuevas = []; S.fotosQuitar = []; S.fotosExist = []; renderThumbs(); quitarPartida(); setTipo('SALIDA'); msg('msg');
+  $('fEntregado').value = ent; $('fMotivo').value = mot; actualizarDoc();
 }
 async function guardar(ev) {
   ev.preventDefault();
@@ -220,7 +254,7 @@ async function guardar(ev) {
   const E = S.tipo === 'ENTRADA';
   Object.assign(r, { tipo: S.tipo, fecha: $('fFecha').value, codigo: S.sel.code, cantidad: m,
     n_nea: E ? $('fNea').value.trim() : '', recogido_de: E ? $('fRecogido').value : '',
-    entregado_a: E ? '' : $('fEntregado').value.trim().toUpperCase(), motivo: E ? '' : $('fMotivo').value.trim(), doc: E ? '' : $('fDoc').value.trim(),
+    entregado_a: E ? '' : $('fEntregado').value.trim().toUpperCase(), motivo: E ? '' : $('fMotivo').value.trim(), doc: E ? '' : (old ? (old.doc || docActual().doc) : docActual().doc),
     observacion: $('fObs').value.trim(), editado: old ? ahoraISO() : null });
   if (!old && S.gps) Object.assign(r, { lat: S.gps.lat, lon: S.gps.lon, acc: S.gps.acc });
   for (const fid of S.fotosQuitar) { await del('fotos', fid); r.fotos = r.fotos.filter(x => x !== fid); }
@@ -233,7 +267,7 @@ async function guardar(ev) {
   }
   await put('recs', r);
   if (old) S.recs[S.recs.indexOf(old)] = r; else S.recs.push(r);
-  toast(old ? 'Registro actualizado' : `✔ ${r.tipo === 'ENTRADA' ? 'Entrada' : 'Salida'}: ${r.codigo} · ${fmt(m)} ${S.sel.und}`);
+  toast(old ? 'Registro actualizado' : `✔ Salida ${r.doc}: ${r.codigo} · ${fmt(m)} ${S.sel.und}`);
   limpiar(true); renderTodo();
 }
 
@@ -305,7 +339,7 @@ async function editar(id) {
   limpiar(false); cambiarTab('tab-reg');
   $('editId').value = r.id; setTipo(r.tipo); $('fFecha').value = r.fecha; $('fObs').value = r.observacion || '';
   $('fNea').value = r.n_nea || ''; if (r.recogido_de) $('fRecogido').value = r.recogido_de;
-  $('fEntregado').value = r.entregado_a || ''; $('fMotivo').value = r.motivo || ''; $('fDoc').value = r.doc || '';
+  $('fEntregado').value = r.entregado_a || ''; $('fMotivo').value = r.motivo || ''; S.docFijo = r.doc || null; actualizarDoc();
   elegir(r.codigo); $('fCant').value = r.cantidad ?? '';
   S.fotosExist = [];
   for (const fid of r.fotos) { const f = await tx('fotos', 'readonly', st => rqp(st.get(fid))); if (f) S.fotosExist.push({ id: fid, url: URL.createObjectURL(new Blob([f.buf], { type: 'image/jpeg' })) }); }
@@ -321,6 +355,7 @@ function correccion(id) {
   limpiar(false); cambiarTab('tab-reg'); setTipo(r.tipo); $('fFecha').value = r.fecha;   // misma fecha (mismo mes) y mismo tipo que el registro que corrige
   elegir(r.codigo); $('fCant').value = -(r.cantidad || 0);
   $('fNea').value = r.n_nea || ''; if (r.recogido_de) $('fRecogido').value = r.recogido_de; $('fEntregado').value = r.entregado_a || ''; $('fMotivo').value = r.motivo || '';
+  S.docFijo = r.doc || null; actualizarDoc();
   $('fObs').value = `Corrección de la ${r.tipo.toLowerCase()} del ${fechaTxt(r.fecha)} (${fmt(r.cantidad)})`; recalcular();
   toast('Misma fecha y tipo del registro corregido. Ajuste la cantidad negativa y guarde');
 }
@@ -461,7 +496,9 @@ async function init() {
   $('recientes').onclick = e => { const b = e.target.closest('[data-c]'); if (b) elegir(b.dataset.c); };
   $('btnCambiar').onclick = quitarPartida;
   $('fCant').oninput = recalcular;
-  $('fFecha').onchange = () => validar(false);
+  $('fFecha').onchange = () => { validar(false); actualizarDoc(); };
+  $('fEntregado').oninput = actualizarDoc;
+  $('btnValeNuevo').onclick = () => { S.valeNuevo = true; actualizarDoc(); };
   $('frm').onsubmit = guardar; $('btnLimpiar').onclick = () => limpiar(false);
   $('btnGps').onclick = () => tomarGps(false);
   $('fFoto').onchange = agregarFoto;
@@ -480,7 +517,7 @@ async function init() {
   window.addEventListener('online', red); window.addEventListener('offline', red); red();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-  renderThumbs(); setTipo('ENTRADA');
+  renderThumbs(); setTipo('SALIDA'); actualizarDoc();
   renderTodo();
   if (!S.user || !S.cat) cambiarTab('tab-cfg');
 }

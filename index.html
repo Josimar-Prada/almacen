@@ -8,7 +8,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Almacén">
-<title>Almacén de obra</title>
+<title>Almacén de obra · Salidas</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" href="icon-192.png">
@@ -23,7 +23,7 @@
 <body>
 <header class="top" style="background:#385723">
   <div class="brand">
-    <strong>Almacén de obra</strong>
+    <strong>Almacén · Salidas</strong>
     <span id="hdrInfo" class="muted small">—</span>
   </div>
   <span id="netBadge" class="badge">…</span>
@@ -39,7 +39,7 @@
 
     <form id="frm" class="card" autocomplete="off" novalidate>
       <input type="hidden" id="editId">
-      <div class="seg tipo" role="tablist">
+      <div class="seg tipo hidden" role="tablist">
         <button type="button" id="tipoEnt" class="on ent">⬇ ENTRADA a obra</button>
         <button type="button" id="tipoSal" class="sal">⬆ SALIDA de almacén</button>
       </div>
@@ -58,7 +58,7 @@
         <div class="pgrid">
           <div><span class="muted small">Und</span><b id="pUnd"></b></div>
           <div><span class="muted small">Stock en almacén</span><b id="pSaldo"></b></div>
-          <div><span class="muted small">Por recibir (O/C)</span><b id="pRecibir"></b></div>
+          <div><span class="muted small">O/C</span><b id="pRecibir"></b></div>
         </div>
         <button type="button" class="link" id="btnCambiar">Cambiar material</button>
       </div>
@@ -67,7 +67,7 @@
       <div class="metrado">Cantidad: <b id="outMet">—</b> <span id="outUnd"></span></div>
       <div id="msg" class="msg hidden"></div>
 
-      <div id="boxEnt">
+      <div id="boxEnt" class="hidden">
         <div class="row2">
           <label>N° NEA (de obra)<input id="fNea" placeholder="Ej. 015"></label>
           <label>Recogido de<select id="fRecogido">
@@ -78,14 +78,15 @@
           </select></label>
         </div>
       </div>
-      <div id="boxSal" class="hidden">
+      <div id="boxSal">
         <label>Entregado a<input id="fEntregado" list="dlEntregado" placeholder="Nombre de quien recibe"></label>
         <datalist id="dlEntregado"></datalist>
         <div class="row2">
           <label>Motivo / frente<input id="fMotivo" list="dlMotivo" placeholder="Ej. Captación, Sector 2"></label>
           <datalist id="dlMotivo"></datalist>
-          <label>Doc. de salida<input id="fDoc" placeholder="Ej. Vale 045"></label>
+          <label>Doc. de salida (automático)<input id="fDoc" readonly tabindex="-1" style="background:#eef3fb;font-weight:700;color:#1f3864"></label>
         </div>
+        <div class="small muted"><span id="docInfo"></span> <button type="button" class="link hidden" id="btnValeNuevo">usar vale nuevo</button></div>
       </div>
 
       <label>Observación<textarea id="fObs" rows="2" placeholder="Opcional"></textarea></label>
