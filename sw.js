@@ -1,5 +1,5 @@
 /* Service worker (app ALMACÉN): guarda la app en el teléfono para que abra sin señal. */
-const VERSION = 'almacen-v1.1.0';
+const VERSION = 'almacen-v1.2.0';
 const LIB = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.mini.min.js';
 const FILES = ['./', './index.html', '../metrados/style.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 self.addEventListener('install', e => {
